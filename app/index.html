@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>atlas.ietfmap.app · IETF Atlas</title>
+<meta name="description" content="IETF 文稿地图：按工作组看清草案与 RFC 之间谁引用谁，以及自己漏了哪些该读的依据。第三方非官方工具。">
+<meta name="theme-color" content="#f6f8fa">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="IETF Atlas">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="icon" href="./assets/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="./assets/icon-192.png">
+<link rel="stylesheet" href="./assets/style.css">
+</head>
+<body>
+<noscript><p style="padding:20px">IETF Atlas 需要启用 JavaScript。</p></noscript>
+<div id="boot" style="padding:60px 20px;text-align:center;color:#59636e;font:14px system-ui">
+  正在载入 IETF 数据快照…
+</div>
+<script type="module">
+  import { boot, route } from './assets/app.js';
+  import { viewGraph } from './assets/view-graph.js';
+  import { viewLibrary, viewDiagnosis } from './assets/view-lib.js';
+  import { viewData, viewSettings, viewLog, viewHelp, viewAbout } from './assets/view-misc.js';
+  import { viewRead } from './assets/offline.js';
+
+  route('/graph', viewGraph);
+  route('/library', viewLibrary);
+  route('/diagnosis', viewDiagnosis);
+  route('/settings', viewSettings);
+  route('/log', viewLog);
+  route('/help', viewHelp);
+  route('/about', viewAbout);
+  route('/data', viewData);
+  route('/read', viewRead);
+
+  // 兼容旧链接（老收藏的书签仍然能用）：三个子页合并成了一幅图
+  route('/map', viewGraph);
+  route('/atlas', viewGraph);
+  route('/relations', viewGraph);
+  route('/path', viewGraph);
+  route('/gaps', viewDiagnosis);
+  route('/reports', viewDiagnosis);
+
+  boot().catch(e => {
+    document.getElementById('view').innerHTML =
+      `<div class="empty"><strong>加载失败</strong>${e.message}<br><br>若你处于离线状态，请联网后重试。</div>`;
+  });
+</script>
+</body>
+</html>

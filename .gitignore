@@ -1,0 +1,19 @@
+# 运行与构建产物：源码进库，数据重新抓取即可
+__pycache__/
+*.pyc
+core.*
+
+# 抓取的中间结果（几十 MB，由 scripts/fetch.py 重新生成）
+scripts/out/
+scripts/out2/
+
+# 构建产物：app/data/snapshot.json(.gz) 由 scripts/pack.py 生成，
+# layout.json 由 scripts/layout.py 生成。运行期缺快照时应用会自动向 Datatracker 回源，
+# 想离线开发就本地跑一遍这三条命令。
+app/data/snapshot.json
+app/data/snapshot.json.gz
+app/data/layout.json
+
+# 本地/编辑器
+.DS_Store
+*.log

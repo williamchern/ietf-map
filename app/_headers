@@ -1,0 +1,11 @@
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: geolocation=(), camera=(), microphone=()
+  X-Frame-Options: SAMEORIGIN
+/assets/icon.svg
+  Cache-Control: public, max-age=604800
+/sw.js
+  Cache-Control: no-cache
+/data/*
+  Cache-Control: no-cache

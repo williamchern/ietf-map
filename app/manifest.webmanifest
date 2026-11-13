@@ -1,0 +1,26 @@
+{
+  "name": "IETF Atlas · 文稿地图",
+  "short_name": "IETF Atlas",
+  "description": "把关心的 IETF 草案与 RFC 挂到工作组/研究组上，识别知识缺口并生成分析报告。",
+  "id": "/",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
+  "orientation": "any",
+  "background_color": "#ffffff",
+  "theme_color": "#f6f8fa",
+  "lang": "zh-CN",
+  "categories": ["productivity", "education", "utilities"],
+  "icons": [
+    { "src": "./assets/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "./assets/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "./assets/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "./assets/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "缺口诊断", "url": "./index.html#/gaps", "description": "查看孤儿草案与断链引用" },
+    { "name": "添加文稿", "url": "./index.html#/library", "description": "快速收藏" },
+    { "name": "分析报告", "url": "./index.html#/reports" }
+  ]
+}

@@ -1,0 +1,4 @@
+[[app]]
+name = "app"
+port = 8_080
+cmd = 'cd "/workspace" && /tmp/run2.sh'
