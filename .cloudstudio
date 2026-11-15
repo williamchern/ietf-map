@@ -1,4 +1,4 @@
 [[app]]
 name = "app"
 port = 8_080
-cmd = 'cd "/workspace" && /tmp/run2.sh'
+cmd = 'cd "/workspace" && ATLAS_PUBLIC_HOST=ietfmap.app.workbuddy.host python3 launcher.py'

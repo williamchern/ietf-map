@@ -48,6 +48,17 @@ python3 launcher.py     # 等价于 server.py，但端口没开时重试、探�
   在 Fly.io / Railway 上挂一个 volume 到 `/app/state`；只读文件系统下要先 `mkdir -p state` 并确保可写。
 - **一定要走 HTTPS**。`Secure` Cookie 依据 `X-Forwarded-Proto` 或 Host 判断，反代要透传这个头；
   没走 HTTPS 时会话 Cookie 可被同网段窃听。
+- **反代不改写 Host 时要声明公网域名**。写操作（登录、改密、建号）会做同源校验，
+  拿浏览器的 `Origin` 跟服务看到的 `Host` 比。如果网关把 `Host` 换成了内部地址
+  （容器名、`xxx.sandbox.…` 之类），两个值永远不相等，登录会直接 403。两种解法：
+
+  ```bash
+  # 解法一（推荐）：告诉服务对外的域名
+  ATLAS_PUBLIC_HOST=ietfmap.app.workbuddy.host python3 launcher.py
+  ```
+
+  或者让反代透传 `X-Forwarded-Host` / `Host` 原值。被拦下来的请求会写一条
+  `origin-refused` 审计（含它看到的 Host），在「操作日志」页能直接看到现场。
 - **多副本要注意**：会话是无状态的（HMAC 签名），所以多机部署必须共享同一个 `state/secret`，
   否则每台机器签发的 Cookie 在别的机器上验不过。
 - 忘记密码：用另一个管理员在「配置 → 账号管理」里重置。**如果只剩一个管理员、密码又丢了**，

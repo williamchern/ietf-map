@@ -35,6 +35,7 @@ MAX_DOC = 12 * 1024 * 1024   # 单份正文上限 12MB，挡住异常大文件
 _cache = {}
 _lock = threading.Lock()
 _ready_said = False
+_ORIGIN_SEEN = {}          # 同源校验拒绝时，每个来源 5 分钟只记一次，免得被刷屏
 
 # 只允许官方正文，且名字/版本/格式都按白名单校验——代理绝不能变成任意 URL 的出口（SSRF）
 NAME_RE = re.compile(r"^(rfc\d{1,5}|bcp\d{1,4}|std\d{1,4}|fyi\d{1,4}|draft-[a-z0-9][a-z0-9-]{0,90})$")
@@ -178,24 +179,66 @@ class Handler(SimpleHTTPRequestHandler):
 
     def _set_session(self, token, max_age=auth.SESSION_TTL):
         proto = (self.headers.get("X-Forwarded-Proto") or "").split(",")[0].strip().lower()
-        host = (self.headers.get("Host") or "").split(":")[0].lower()
-        secure = proto == "https" or host not in ("localhost", "127.0.0.1", "::1", "")
+        fwd = (self.headers.get("Forwarded") or "").lower()
+        host = (self.headers.get("Host") or "").split(":")[0].strip().lower()
+        secure = proto == "https" or "proto=https" in fwd or host not in ("localhost", "127.0.0.1", "::1", "")
         bits = [f"{auth.COOKIE}={token}", "Path=/", "HttpOnly", "SameSite=Lax", f"Max-Age={max_age}"]
         if secure:
             bits.append("Secure")
         self.send_header("Set-Cookie", "; ".join(bits))
+
+    def _host_candidates(self):
+        """用户实际访问的站点名。
+
+        反向代理（Nginx / 云网关）经常把 Host 改写成容器内部地址（localhost:8080 之类），
+        直接拿 Host 跟浏览器发来的 Origin 比必然不相等。所以按可信度排列收一遍：
+        显式配置 → X-Forwarded-Host（代理注入，浏览器 JS 改不了这个头）→ Host。
+        """
+        out = []
+        for name in ("X-Forwarded-Host", "X-Original-Host", "Host"):
+            raw = self.headers.get(name) or ""
+            for part in raw.split(","):        # 多级代理是逗号列表
+                part = part.strip().lower()
+                if part and part not in out:
+                    out.append(part)
+        forced = (os.environ.get("ATLAS_PUBLIC_HOST") or "").strip().lower()
+        if forced and forced not in out:
+            out.insert(0, forced)
+        return out
+
+    @staticmethod
+    def _norm_host(value):
+        """去掉默认端口，免得 https://x 与 x:443 被当成两回事。"""
+        v = (value or "").strip().lower()
+        if v.endswith(":443"):
+            v = v[:-4]
+        elif v.endswith(":80"):
+            v = v[:-3]
+        return v
 
     def _same_origin(self):
         """写操作只接受同源：挡掉别的站点借用户浏览器发请求（配合 SameSite=Lax）。"""
         origin = self.headers.get("Origin")
         if not origin:
             return True                      # 非浏览器客户端（curl / 脚本）没有 Origin
-        host = (self.headers.get("Host") or "").lower()
         try:
-            o = urllib.parse.urlparse(origin)
-            return (o.netloc or "").lower() == host
+            parsed = urllib.parse.urlparse(origin)
         except Exception:
             return False
+        want = self._norm_host(parsed.netloc)
+        if not want:
+            return False
+        if want in {self._norm_host(h) for h in self._host_candidates()}:
+            return True
+        # 判断不了就把现场记下来（只进服务端日志/审计，不回给客户端，免得泄漏内部地址）
+        key = want
+        now = time.time()
+        if now - _ORIGIN_SEEN.get(key, 0) > 300:
+            _ORIGIN_SEEN[key] = now
+            hosts = self._host_candidates()
+            sys.stderr.write("auth: origin refused origin=%r hosts=%r\n" % (origin, hosts))
+            auth.audit("origin-refused", f"{origin} → Host 候选 {hosts}")
+        return False
 
     def _need(self, role=None):
         u = self._current_user()
@@ -327,7 +370,10 @@ class Handler(SimpleHTTPRequestHandler):
         if not path.startswith("/api/auth/"):
             return self._json(404, b'{"error":"not found"}')
         if not self._same_origin():
-            return self._json(403, b'{"error":"cross-origin request refused"}')
+            # 提示给运维看：反代不改写 Host 时必须声明公网域名，否则同源校验永远过不了
+            return self._json(403, json.dumps(
+                {"error": "请求来源校验未通过：本服务部署在反向代理后，需设置环境变量 ATLAS_PUBLIC_HOST=<你的域名>"},
+                ensure_ascii=False).encode())
         try:
             return self._do_auth(path)
         except Exception as e:
