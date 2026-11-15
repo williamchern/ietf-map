@@ -18,7 +18,9 @@ app/                 可安装的 PWA 前端
   data/snapshot.json 构建期生成的 IETF 数据快照
   data/layout.json   图谱的静态坐标（离线算好，运行时只读）
   assets/offline.js  离线正文：按版本下载、存 IndexedDB、应用内阅读
-server.py            静态托管 + /api/live 同源代理（转发 Datatracker，解决 CORS）
+server.py            静态托管 + /api/live 同源代理（转发 Datatracker，解决 CORS）+ 登录鉴权
+auth.py              账号与会话：PBKDF2 散列、签名 Cookie、登录节流、审计日志
+state/               运行时生成（不入库）：users.json 账号、secret 签名密钥、auth.log 审计
 launcher.py          托管平台用：端口没开时重试、探针断连不退出，起来后打一行就绪日志
 scripts/
   fetch.py           从 Datatracker 拉取草案/组/关系 → scripts/out/*.json
@@ -37,6 +39,10 @@ docs/
 PORT=8080 python3 server.py   # http://localhost:8080
 python3 launcher.py           # 托管平台用（$PORT 由平台注入）
 ```
+
+首次启动会自动在 `state/users.json` 里建一个管理员：**`admin` / `admin`**，并标记为「必须改密码」——
+登录后强制改掉才能进。改完在「配置 → 账号管理」里可以再加别的账号（管理员 / 普通）。
+密码只以 PBKDF2-SHA256（21 万轮 + 随机盐）散列保存，`state/` 已在 `.gitignore` 里，别提交。
 
 > 必须用 `server.py` 而不是纯静态服务器：前端需要 `/api/live/*` 同源代理，
 > 浏览器的跨域限制不允许直连 `datatracker.ietf.org`。

@@ -17,3 +17,6 @@ app/data/layout.json
 # 本地/编辑器
 .DS_Store
 *.log
+
+# 账号凭据与会话密钥（服务端生成，绝不入库）
+state/

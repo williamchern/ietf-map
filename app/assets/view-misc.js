@@ -1,12 +1,20 @@
 /* IETF Atlas — 数据源 / 配置 / 日志 / 帮助 / 关于 */
 import { esc, toast, log, db, getSettings, setSettings, DEFAULT_SETTINGS, fmtDate, relTime } from './db.js';
 import { index, getAssets, loadSnapshot } from './data.js';
+import {
+  authUser, isAdmin, session, changePassword, logout, listUsers,
+  createUser, resetUserPassword, deleteUser, auditEvents,
+} from './auth.js';
 
 const ACTIONS = {
   'star-doc': '收藏文稿', 'unstar-doc': '移除文稿', 'star-group': '关注组', 'unstar-group': '取消关注组',
   'note-doc': '保存笔记', 'report-generate': '生成报告', 'report-export': '导出报告',
   'export-backup': '导出备份', 'import-backup': '导入备份', 'settings-save': '修改配置',
-  'data-refresh': '刷新数据源', 'data-clear': '清空本地数据', 'domain-change': '修改域名'
+  'data-refresh': '刷新数据源', 'data-clear': '清空本地数据', 'domain-change': '修改域名',
+  'login': '登录', 'logout': '退出登录', 'password-change': '修改密码',
+  'user-create': '新建账号', 'user-reset': '重置密码', 'user-delete': '删除账号',
+  'auth-login': '登录（服务端）', 'auth-login-fail': '登录失败（服务端）',
+  'auth-login-lock': '登录锁定', 'data-migrate': '迁移旧数据'
 };
 
 export async function viewLog(root) {
@@ -14,7 +22,7 @@ export async function viewLog(root) {
   const logs = (await db.all('logs')).sort((a, b) => b.ts - a.ts);
   root.innerHTML = `
     <h1>日志</h1>
-    <p class="sub">所有操作只记录在本地浏览器，不上传。</p>
+    <p class="sub">本机操作只记在这台浏览器；登录 / 账号变更另有一份服务端审计，仅管理员可见。</p>
     <div class="row" style="margin-bottom:12px">
       <input type="search" id="q" placeholder="过滤动作或内容…" style="max-width:320px">
       <span class="spacer"></span>
@@ -26,7 +34,9 @@ export async function viewLog(root) {
         <span class="mono hint">${esc(new Date(l.ts).toISOString().slice(0, 19).replace('T', ' '))}</span>
         <span><span class="label">${esc(ACTIONS[l.action] || l.action)}</span></span>
         <span class="mono">${esc(l.detail)}</span></div>`).join('') : '<div class="empty"><strong>暂无日志</strong>开始使用后，这里会记录你的每一次操作。</div>'}
-    </div></div>`;
+    </div></div>
+    ${isAdmin() ? `<div class="card"><div class="head">服务端审计（登录与账号）</div>
+      <div class="body" id="audit-box"><span class="hint">正在读取…</span></div></div>` : ''}`;
   root.querySelector('#q').addEventListener('input', e => {
     const s = e.target.value.toLowerCase();
     root.querySelectorAll('.log-row').forEach(r => r.style.display = r.dataset.t.toLowerCase().includes(s) ? '' : 'none');
@@ -41,6 +51,23 @@ export async function viewLog(root) {
     a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv' }));
     a.download = `ietf-atlas-log-${fmtDate(Date.now())}.csv`; a.click();
   });
+
+  // 服务端审计：只读，改不了（改了就失去审计意义）
+  const box = root.querySelector('#audit-box');
+  if (box) {
+    const events = await auditEvents();
+    const NAME = {
+      'seed': '初始化', 'login': '登录成功', 'login-fail': '登录失败', 'login-lock': '触发锁定',
+      'logout': '退出', 'password-change': '改密码', 'user-create': '新建账号',
+      'user-reset': '重置密码', 'user-delete': '删除账号',
+    };
+    box.innerHTML = events.length ? `<div class="log-list">${events.slice().reverse().map(e => `
+      <div class="log-row">
+        <span class="mono hint">${esc(new Date(e.ts).toISOString().slice(0, 19).replace('T', ' '))}</span>
+        <span><span class="label ${e.action === 'login-fail' || e.action === 'login-lock' ? 'red' : ''}">${esc(NAME[e.action] || e.action)}</span></span>
+        <span class="mono">${esc(e.detail || '')}</span>
+      </div>`).join('')}</div>` : '<span class="hint">还没有账号相关的事件。</span>';
+  }
 }
 
 export async function viewData(root) {
@@ -102,9 +129,52 @@ export async function viewSettings(root) {
   root.className = '';
   const s = await getSettings();
   const host = `${s.domainPrefix}.${s.rootDomain}`;
+  const me = authUser();
+  const admin = isAdmin();
   root.innerHTML = `
     <h1>配置</h1>
-    <p class="sub">所有设置保存在本机浏览器（IndexedDB），跨设备不共享。</p>
+    <p class="sub">界面与数据设置保存在本机浏览器；账号由本站服务器统一校验。</p>
+
+    <div class="card"><div class="head">账号与安全</div><div class="body">
+      <div class="row" style="margin-bottom:14px">
+        <span class="label ${admin ? 'blue' : 'green'}">${admin ? '管理员' : '普通账号'}</span>
+        <b class="mono">${esc(me?.name || '')}</b>
+        ${session.offline ? '<span class="label yellow" title="这次没能连上服务器，用的是本机缓存的登录状态">离线</span>' : ''}
+        <span class="spacer"></span>
+        <button class="btn sm" id="pw-toggle">修改密码</button>
+        <button class="btn sm" id="signout">退出登录</button>
+      </div>
+      <form id="pw-form" hidden style="max-width:360px">
+        <label class="field"><span>当前密码</span><input type="password" id="pw-old" autocomplete="current-password"></label>
+        <label class="field"><span>新密码（至少 8 位）</span><input type="password" id="pw-new" autocomplete="new-password"></label>
+        <label class="field"><span>再输一次</span><input type="password" id="pw-new2" autocomplete="new-password"></label>
+        <div class="row"><button class="btn primary" type="submit" id="pw-go">保存新密码</button>
+          <span class="hint" id="pw-msg"></span></div>
+        <p class="hint" style="margin:8px 0 0">改完之后其他设备上的登录会立即失效，需要重新登录。</p>
+      </form>
+      <p class="hint" id="pw-note" style="margin:14px 0 0">密码只以加盐散列（PBKDF2-SHA256）存在服务器上，任何页面都读不到明文；
+        忘记密码只能由管理员重置。</p>
+    </div></div>
+
+    ${admin ? `<div class="card"><div class="head">账号管理（仅管理员）</div><div class="body">
+      <div id="users-box" class="hint">正在读取…</div>
+      <div class="sub-head">新建账号</div>
+      <form id="new-user" style="max-width:460px">
+          <div class="grid c2" style="gap:10px">
+            <label class="field"><span>账号名</span><input type="text" id="nu-name" placeholder="3–24 位，字母数字 . _ -" autocomplete="off"></label>
+            <label class="field"><span>初始密码</span><input type="password" id="nu-pw" placeholder="至少 8 位" autocomplete="new-password"></label>
+          </div>
+          <div class="grid c2" style="gap:10px">
+            <label class="field"><span>角色</span>
+              <select id="nu-role"><option value="user">普通账号</option><option value="admin">管理员</option></select></label>
+            <label class="field"><span>备注（可选）</span><input type="text" id="nu-note" placeholder="给谁用、做什么" maxlength="60"></label>
+          </div>
+          <div class="row"><button class="btn primary" type="submit" id="nu-go">创建账号</button>
+            <span class="hint" id="nu-msg"></span></div>
+          <p class="hint" style="margin:8px 0 0">新账号第一次登录会被要求改密码。各账号的收藏与笔记互相隔离。</p>
+      </form>
+    </div></div>` : ''}
+
     <div class="grid c2">
       <div class="card"><div class="head">发布域名</div><div class="body">
         <label class="field"><span>APP 前缀（可改）</span>
@@ -235,6 +305,121 @@ jobs:
     for (const s2 of ['assets', 'logs', 'reports', 'settings', 'offline']) await db.clear(s2);
     toast('已清空'); setTimeout(() => location.reload(), 600);
   });
+
+  /* ---------- 账号与安全 ---------- */
+
+  const pwForm = root.querySelector('#pw-form');
+  root.querySelector('#pw-toggle').addEventListener('click', () => {
+    pwForm.hidden = !pwForm.hidden;
+    if (!pwForm.hidden) root.querySelector('#pw-old').focus();
+  });
+  root.querySelector('#signout').addEventListener('click', async () => {
+    if (!confirm('退出登录？本机收藏不会丢，重新登录同一个账号就能看到。')) return;
+    await logout();
+    location.reload();
+  });
+  pwForm.addEventListener('submit', async e => {
+    e.preventDefault();
+    const msg = root.querySelector('#pw-msg');
+    const old = root.querySelector('#pw-old').value;
+    const a = root.querySelector('#pw-new').value;
+    const b = root.querySelector('#pw-new2').value;
+    msg.textContent = '';
+    if (a !== b) { msg.textContent = '两次输入的新密码不一致'; return; }
+    try {
+      msg.textContent = '保存中…';
+      await changePassword(old, a);
+      pwForm.reset();
+      pwForm.hidden = true;
+      const note = root.querySelector('#pw-note');
+      if (note) { note.textContent = '✓ 密码刚刚已更新，其他设备上的登录已失效'; note.className = 'hint good'; }
+      toast('密码已更新');
+    } catch (err) {
+      msg.textContent = '✗ ' + err.message;
+    }
+  });
+
+  if (admin) mountUserAdmin(root);
+}
+
+/** 管理员：账号列表 + 重置 / 删除 */
+async function mountUserAdmin(root) {
+  const box = root.querySelector('#users-box');
+  if (!box) return;
+
+  const renderList = async () => {
+    let data;
+    try {
+      data = await listUsers();
+    } catch (e) {
+      box.innerHTML = `<span class="hint">读不到账号列表：${esc(e.message)}</span>`;
+      return;
+    }
+    const users = data.users || [];
+    box.innerHTML = `<div class="table-wrap"><table class="table-plain auth-table">
+      <thead><tr><th>账号</th><th>角色</th><th>状态</th><th>最近登录</th><th>备注</th><th></th></tr></thead>
+      <tbody>${users.map(u => `<tr>
+        <td class="mono">${esc(u.name)}${u.name === data.me ? ' <span class="label blue">你</span>' : ''}</td>
+        <td>${u.role === 'admin' ? '<span class="label blue">管理员</span>' : '<span class="label">普通</span>'}</td>
+        <td>${u.must_change ? '<span class="label yellow">待改密码</span>' : '<span class="hint">正常</span>'}</td>
+        <td class="hint">${u.last_login ? relTime(u.last_login) : '从未'}</td>
+        <td class="hint" style="overflow-wrap:anywhere">${esc(u.note || '—')}</td>
+        <td style="text-align:right;white-space:nowrap">
+          <button class="btn sm" data-rst="${esc(u.name)}">重置密码</button>
+          ${u.name === data.me ? '' : `<button class="btn sm danger" data-del="${esc(u.name)}">删除</button>`}
+        </td></tr>`).join('')}</tbody></table></div>`;
+
+    box.querySelectorAll('[data-rst]').forEach(b => b.addEventListener('click', async () => {
+      const name = b.dataset.rst;
+      const pw = prompt(`给「${name}」设一个新密码（至少 8 位）。\n对方下次登录会被要求再改一次。`);
+      if (!pw) return;
+      try {
+        await resetUserPassword(name, pw);
+        await log('user-reset', name);
+        toast('已重置 ' + name + ' 的密码');
+        renderList();
+      } catch (e) { toast('✗ ' + e.message); }
+    }));
+    box.querySelectorAll('[data-del]').forEach(b => b.addEventListener('click', async () => {
+      const name = b.dataset.del;
+      if (!confirm(`删除账号「${name}」？\n\n他/她将无法再登录，但本机已有的收藏不会被删除。`)) return;
+      try {
+        await deleteUser(name);
+        await log('user-delete', name);
+        toast('已删除 ' + name);
+        renderList();
+      } catch (e) { toast('✗ ' + e.message); }
+    }));
+  };
+
+  root.querySelector('#new-user')?.addEventListener('submit', async e => {
+    e.preventDefault();
+    const msg = root.querySelector('#nu-msg');
+    const name = root.querySelector('#nu-name').value.trim();
+    const pw = root.querySelector('#nu-pw').value;
+    const role = root.querySelector('#nu-role').value;
+    const note = root.querySelector('#nu-note').value.trim();
+    msg.textContent = '';
+    const btn = root.querySelector('#new-user button[type=submit]');
+    btn.disabled = true;
+    try {
+      msg.textContent = '创建中…';
+      await createUser(name, pw, role, note);
+      await log('user-create', `${name}（${role}）`);
+      root.querySelector('#nu-name').value = '';
+      root.querySelector('#nu-pw').value = '';
+      root.querySelector('#nu-note').value = '';
+      msg.textContent = '✓ 已创建，把账号和初始密码告诉对方，首次登录需改密码';
+      renderList();
+      root.querySelector('#nu-name').focus();   // 连着建下一个
+    } catch (err) {
+      msg.textContent = '✗ ' + err.message;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  renderList();
 }
 
 /* ---------- 静态内容 ---------- */
@@ -254,11 +439,27 @@ export async function viewHelp(root) {
     </ul>
     <p class="hint">不做宏大叙事：没有评分排名，没有"知识全景"，只有你手边这几份文稿的事实。</p>
 
-    <h2>2. 怎么切换视图</h2>
+    <h2>2. 账号与登录</h2>
+    <p>打开应用先要登录。账号由<b>本站服务器</b>校验，密码只以加盐散列（PBKDF2-SHA256）存在服务器上，页面读不到明文。</p>
+    <table>
+      <tr><th>事项</th><th>说明</th></tr>
+      <tr><td>初始账号</td><td><code>admin</code> / <code>admin</code>，<b>登录后必须改密码</b>才能进</td></tr>
+      <tr><td>改自己的密码</td><td>配置 → 账号与安全 → 修改密码。改完其他设备上的登录立即失效</td></tr>
+      <tr><td>加账号</td><td>管理员在 配置 → 账号管理 里新建，填账号名 + 初始密码，选「普通」或「管理员」</td></tr>
+      <tr><td>忘了密码</td><td>只能由管理员重置；重置后对方下次登录要再改一次</td></tr>
+      <tr><td>退出</td><td>顶栏右侧「退出」，或配置页「退出登录」</td></tr>
+    </table>
+    <p class="hint">收藏、笔记、离线正文仍然<b>存在各自浏览器里</b>，按账号分开：同一台设备换个人登录，看到的是他/她自己的收藏。
+    账号是"门禁"，不是加密保险箱——真要保密，请用带加密的设备与浏览器配置。</p>
+    <p class="hint">从旧版本升级的：只有<b>升级后第一个登录的账号</b>会接手原来那份收藏（通常就是你自己）；
+    之后新建的账号都是空的，不会复制别人的收藏。</p>
+    <p class="hint">断网时用的是本机缓存的登录状态，离线阅读照常；缓存过期（12 小时）后需要联网重新登录。</p>
+
+    <h2>3. 怎么切换视图</h2>
     <p>顶栏左上角是<b>视图下拉</b>：点一下展开竖排菜单，选哪个进哪个，不用在横排标题里一个个找。</p>
     <p class="hint">地址栏里的 hash 会跟着变（<code>#/graph</code>、<code>#/library</code>…），收藏夹里存哪个视图都行。</p>
 
-    <h2>3. 图谱怎么读</h2>
+    <h2>4. 图谱怎么读</h2>
     <p>只有一幅图，回答一个问题：<b>这个技术领域里，谁建立在谁之上。</b></p>
     <table>
       <tr><th>你看到的</th><th>意思</th></tr>
@@ -270,7 +471,7 @@ export async function viewHelp(root) {
     <p class="hint">选哪个领域，用左上角的下拉框。领域 = IETF 的工作组 / 研究组，图里是它内部的文稿引用。
     下拉里<b>只出现你收藏的草案所在的工作组</b>——全站几十个组跟你没关系，列出来只是噪声。</p>
 
-    <h2>4. 推荐使用顺序</h2>
+    <h2>5. 推荐使用顺序</h2>
     <ol>
       <li>先把你在读的 <b>3–8 份文稿</b>加进来（只加<b>真的读过</b>的，别加待读清单）。</li>
       <li><a href="#/graph">图谱</a>里只有你收藏的组，选一个看这张领域图：哪些是地基，哪些建立在它之上。</li>
@@ -279,12 +480,12 @@ export async function viewHelp(root) {
       <li>收藏库按组归类，<b>「已收 / 组内总数」</b>直接告诉你哪块还有空白。</li>
     </ol>
 
-    <h2>5. 关系解读为什么不会瞎编</h2>
+    <h2>6. 关系解读为什么不会瞎编</h2>
     <p>可选的模型归纳有一条硬约束：<b>模型只能看到已抓取的真实引用边，每条结论必须挂证据编号</b>。
     输出后前端会校验编号，对不上一律丢弃并标出丢弃条数。没有配置 API Key 时自动改用本地统计归纳（纯规则计算，结论可复现）。</p>
     <p class="hint">所以不会出现"这两个组有关系，因为都涉及能源"这种没有证据的推测。</p>
 
-    <h2>6. 诊断页四个分区</h2>
+    <h2>7. 诊断页四个分区</h2>
     <p>诊断页不讲评分，只按「补了最有用」的顺序排四段：</p>
     <table>
       <tr><th>分区</th><th>判定规则</th><th>为什么排这个顺序</th></tr>
@@ -294,7 +495,7 @@ export async function viewHelp(root) {
       <tr><td>④ 关注了但没读的组</td><td>关注了组，组内 0 篇收藏</td><td>要么补一份，要么取关，别让收藏库虚胖</td></tr>
     </table>
 
-    <h2>7. 操作速查</h2>
+    <h2>8. 操作速查</h2>
     <ul>
       <li>图中<b>滚轮缩放</b>、<b>拖拽空白处平移</b>；点空白处取消选中</li>
       <li>右上角<b>「全屏」</b>是真的全屏：页眉、页脚、侧栏都收起，只剩图和详情；<b>Esc</b> 或「退出全屏」回来</li>
@@ -306,7 +507,7 @@ export async function viewHelp(root) {
       <li>收藏库里点<b>文稿名</b>就是选版本：读本机副本、下载到本机，或者在线看一次</li>
     </ul>
 
-    <h2>8. 离线下载与阅读</h2>
+    <h2>9. 离线下载与阅读</h2>
     <p>收藏库每一行只有两个入口：<b>点文稿名</b>、点右边的<b>「管理」</b>。两个都打开同一张「版本」面板，
     在里面挑版本（草案有 00 到最新，RFC 只有一版），再决定这一版怎么处理：</p>
     <ul>
@@ -324,10 +525,10 @@ export async function viewHelp(root) {
       <li>正文只是只读缓存；引用与转载仍以官方发布版本为准，别把缓存当权威副本。</li>
     </ul>
 
-    <h2>9. 安装为应用</h2>
+    <h2>10. 安装为应用</h2>
     <p>Chrome / Edge 地址栏右侧点"安装"，或 iOS Safari「分享 → 添加到主屏幕」。安装后快照本地缓存，可离线查看已收藏内容。</p>
 
-    <h2>10. 法律与商标</h2>
+    <h2>11. 法律与商标</h2>
     <blockquote>
       IETF Atlas 是<b>第三方非官方工具</b>，与 IETF Trust、IETF LLC、IESG 无任何隶属或背书关系。
       本站不镜像 IETF 全文文档，仅展示元数据与摘要节选，并链接至 ietf.org 原文。
@@ -368,10 +569,12 @@ export async function viewAbout(root) {
 
     <h2>四、数据处理（隐私）</h2>
     <ul>
-      <li>无账号、无 Cookie 追踪、无第三方分析脚本；<b>不收集任何个人信息</b>。</li>
-      <li>你的收藏、笔记、日志、报告全部保存在浏览器的 IndexedDB 中，不会上传到服务器。</li>
-      <li>因此数据迁移需手动"导出 / 导入 JSON 备份"；清除浏览器数据将导致丢失。</li>
-      <li>由于不处理个人数据，本应用在设计上规避了 GDPR / 中国《个人信息保护法》下的多数义务；若未来加入云同步，须重新进行合规评估。</li>
+      <li>你的收藏、笔记、日志、报告全部保存在浏览器的 IndexedDB 中，不上传到服务器；可按账号分开存放（同一设备换人登录看到各自的数据）。</li>
+      <li><b>账号系统只存最少信息</b>：账号名、角色、密码的加盐散列（PBKDF2-SHA256，210,000 轮）、创建时间、最近登录时间。不收集邮箱、手机号、IP 归属地，也不做画像。</li>
+      <li>登录会话用一枚 <code>HttpOnly</code>、<code>SameSite=Lax</code> 的签名 Cookie 承载，有效期 12 小时；服务端只保留一份审计日志（登录成功 / 失败、账号变更），用于排查异常登录。</li>
+      <li>密码不可逆：管理员能"重置"但不能"看到"任何人的密码；忘记密码只能重置。</li>
+      <li>不接入任何第三方分析脚本；注销账号会立即删除其凭据，本机已有收藏不受影响。</li>
+      <li>由于只处理账号凭据这一最小集合，本应用在设计上规避了 GDPR / 中国《个人信息保护法》下的多数义务；若未来加入云同步，须重新进行合规评估。</li>
     </ul>
 
     <h2>五、风险与免责</h2>

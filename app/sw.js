@@ -1,10 +1,10 @@
 /* IETF Atlas Service Worker — 应用外壳 + 数据快照离线可用 */
-const VERSION = 'v13';
+const VERSION = 'v15';
 const SHELL = `atlas-shell-${VERSION}`;
 const DATA = `atlas-data-${VERSION}`;
 const ASSETS = [
   './', './index.html', './manifest.webmanifest',
-  './assets/style.css', './assets/app.js', './assets/db.js', './assets/data.js',
+  './assets/style.css', './assets/app.js', './assets/auth.js', './assets/db.js', './assets/data.js',
   './assets/kg.js', './assets/view-graph.js', './assets/add-dialog.js',
   './assets/mine.js', './assets/view-lib.js', './assets/view-misc.js',
   './assets/relations.js', './assets/llm.js', './assets/offline.js',

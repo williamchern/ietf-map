@@ -1,5 +1,6 @@
 /* IETF Atlas — 路由与应用外壳 */
 import { getSettings, applyTheme, esc, toast } from './db.js';
+import { loadSession, logout, mountGate, authUser, isAdmin, lastPassword } from './auth.js';
 
 export const NAV = [
   ['/graph', '图谱'],
@@ -57,6 +58,10 @@ export function renderHeader() {
     <div class="header-right">
       <span class="badge-unofficial" title="本应用为第三方视图，非 IETF 官方产品">Unofficial</span>
       <button class="btn sm" id="theme-toggle" aria-label="切换主题" title="切换深色 / 浅色">主题</button>
+      <span class="user-chip" title="${esc(authUser()?.name || '')}${isAdmin() ? '（管理员）' : ''}">
+        <span class="user-dot"></span>${esc(authUser()?.name || '')}
+      </span>
+      <button class="btn sm" id="logout" title="退出登录">退出</button>
     </div>
   </header>`;
 }
@@ -106,6 +111,11 @@ function bindHeader() {
     document.dispatchEvent(new Event('themechange'));
     toast(next === 'dark' ? '已切换为深色' : '已切换为浅色');
   });
+  document.getElementById('logout')?.addEventListener('click', async () => {
+    await logout();
+    toast('已退出');
+    await gate();
+  });
 }
 
 /** 所有表格统一外套一层横向滚动容器：窄屏不挤压、不重叠，可以左右拖 */
@@ -123,6 +133,7 @@ function wrapTables() {
 let _rendering = false;
 export async function render() {
   if (_rendering) return;
+  if (!authUser()) return;              // 登录门还开着，hash 变化不去动它
   _rendering = true;
   try {
     const s = await getSettings();
@@ -141,11 +152,19 @@ export async function render() {
   }
 }
 
+/** 登录门：没登录 → 登录框；首次/被重置密码 → 必须先改密码。断网时用本机缓存放行。 */
+async function gate() {
+  const u = await loadSession();
+  if (!u) return mountGate('login', gate);
+  if (u.must_change) return mountGate('change', gate, { old: lastPassword });
+  await render();
+}
+
 export async function boot() {
   window.addEventListener('hashchange', render);
   document.addEventListener('themechange', () => {});
   if (!location.hash) location.hash = '/graph';
-  await render();
+  await gate();
   // 注册 Service Worker
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('./sw.js').catch(() => {});

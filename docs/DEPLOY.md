@@ -30,6 +30,36 @@ python3 launcher.py     # 等价于 server.py，但端口没开时重试、探�
 平台的就绪探针常常在服务起来之前就开始敲端口，被拒的连接会让 `HTTPServer` 直接退出。
 `launcher.py` 把"端口暂时打不开"当成常态（占上端口再重试），并打印 `Serving ... on http://0.0.0.0:<port>/` 这行就绪日志。
 
+### 账号与登录
+
+服务端带了登录，凭据存在 `state/`（首次启动自动生成，权限 700/600）：
+
+| 文件 | 内容 | 说明 |
+|---|---|---|
+| `state/users.json` | 账号名、角色、盐、PBKDF2 散列、`pv`（密码版本） | 密码不可逆，只能重置 |
+| `state/secret` | 会话签名密钥 | 删掉等于让所有人重新登录 |
+| `state/auth.log` | 登录、改密、建号、删号的审计 | 仅管理员在「操作日志」页可见 |
+
+初始账号是 `admin` / `admin`，**首次登录会强制改密码**。上线后务必先登录改掉。
+
+部署要点：
+
+- **`state/` 必须是持久卷**。容器重建后如果丢了，会自动重新播种 `admin/admin`——等于把门重开了。
+  在 Fly.io / Railway 上挂一个 volume 到 `/app/state`；只读文件系统下要先 `mkdir -p state` 并确保可写。
+- **一定要走 HTTPS**。`Secure` Cookie 依据 `X-Forwarded-Proto` 或 Host 判断，反代要透传这个头；
+  没走 HTTPS 时会话 Cookie 可被同网段窃听。
+- **多副本要注意**：会话是无状态的（HMAC 签名），所以多机部署必须共享同一个 `state/secret`，
+  否则每台机器签发的 Cookie 在别的机器上验不过。
+- 忘记密码：用另一个管理员在「配置 → 账号管理」里重置。**如果只剩一个管理员、密码又丢了**，
+  在服务器上跑：
+
+  ```bash
+  python3 auth.py list                        # 看看有哪些账号
+  python3 auth.py reset admin 新的临时密码      # 立刻生效，旧会话全部失效
+  ```
+
+  服务不用停。这条命令直接改 `state/users.json`，并把该账号标记为「下次登录必须先改密码」。
+
 ## 三、数据更新（构建期）
 
 ```bash

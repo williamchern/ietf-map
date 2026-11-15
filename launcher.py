@@ -16,6 +16,7 @@ import threading
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import server as app  # noqa: E402
+import auth  # noqa: E402
 
 
 class ResilientServer(app.ThreadingHTTPServer):
@@ -42,6 +43,12 @@ def bind(port):
 def main():
     port = int(os.environ.get("PORT", "8080"))
     socketserver.TCPServer.allow_reuse_address = True
+    # 先播种账号再开端口：state/ 丢了也不至于没人能登录（首次启动会建 admin/admin）
+    try:
+        auth.ensure_seed()
+    except OSError as e:
+        print(f"ietf-atlas: 无法写入 {auth.STATE_DIR}（{e}）："
+              "账号将无法保存，请把这一目录挂成可写卷。", flush=True)
     httpd = bind(port)
     print(f"Serving IETF Atlas on http://0.0.0.0:{port}/ (local: http://localhost:{port}/)", flush=True)
     try:
