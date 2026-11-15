@@ -108,12 +108,14 @@ class Handler(SimpleHTTPRequestHandler):
             sys.stderr.write("ietf-atlas ready, listening on 0.0.0.0:%d\n" % self.server.server_port)
             sys.stderr.flush()
 
-    def _json(self, status, payload, cache="no-store"):
+    def _json(self, status, payload, cache="no-store", cookie=None):
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Cache-Control", cache)
+        if cookie:
+            self.send_header("Set-Cookie", cookie)
         self.end_headers()
         self.wfile.write(payload)
 
@@ -177,7 +179,7 @@ class Handler(SimpleHTTPRequestHandler):
         except Exception:
             return {}
 
-    def _set_session(self, token, max_age=auth.SESSION_TTL):
+    def _session_cookie(self, token, max_age=auth.SESSION_TTL):
         proto = (self.headers.get("X-Forwarded-Proto") or "").split(",")[0].strip().lower()
         fwd = (self.headers.get("Forwarded") or "").lower()
         host = (self.headers.get("Host") or "").split(":")[0].strip().lower()
@@ -185,7 +187,10 @@ class Handler(SimpleHTTPRequestHandler):
         bits = [f"{auth.COOKIE}={token}", "Path=/", "HttpOnly", "SameSite=Lax", f"Max-Age={max_age}"]
         if secure:
             bits.append("Secure")
-        self.send_header("Set-Cookie", "; ".join(bits))
+        return "; ".join(bits)
+
+    def _set_session(self, token, max_age=auth.SESSION_TTL):
+        self.send_header("Set-Cookie", self._session_cookie(token, max_age))
 
     def _host_candidates(self):
         """用户实际访问的站点名。
@@ -385,10 +390,18 @@ class Handler(SimpleHTTPRequestHandler):
         path = parsed.path
 
         if path == "/api/auth/me":
-            u = self._current_user()
+            tok = self._cookies().get(auth.COOKIE) or ""
+            u = auth.read_token(tok)
             if not u:
                 return self._json(401, b'{"error":"unauthorized"}')
-            return self._json(200, json.dumps({"user": auth.public_user(u)}, ensure_ascii=False).encode())
+            # 滑动续期：用满一天就悄悄换一张 30 天的新票。天天来的人不会在半夜被踢出去，
+            # 真的 30 天没来才需要重新登录。cookie 只在这一条响应里发，不打扰其它接口。
+            cookie = None
+            age = auth.token_age(tok)
+            if age is not None and age >= auth.RENEW_AFTER:
+                cookie = self._session_cookie(auth.make_token(u))
+            return self._json(200, json.dumps({"user": auth.public_user(u)}, ensure_ascii=False).encode(),
+                              cookie=cookie)
 
         if path == "/api/auth/audit":
             if not self._need("admin"):

@@ -24,7 +24,8 @@ SECRET_FILE = os.path.join(STATE_DIR, "secret")
 AUDIT_FILE = os.path.join(STATE_DIR, "auth.log")
 
 ITER = 210_000
-SESSION_TTL = 12 * 3600          # 12 小时
+SESSION_TTL = 30 * 24 * 3600     # 登录一次管 30 天
+RENEW_AFTER = 24 * 3600          # 用满一天就悄悄续期 → 实际是「连续 30 天不来才失效」
 COOKIE = "atlas_sess"
 NAME_RE = None                    # 由 server 复用的白名单风格：3-24 位字母数字 _ . -
 MAX_BODY = 64 * 1024
@@ -281,6 +282,16 @@ def read_token(token):
         if not u or int(u.get("pv", 1)) != int(payload.get("pv", -1)):
             return None
         return u
+    except Exception:
+        return None
+
+
+def token_age(token):
+    """这枚票签发多久了（秒）。解不开就返回 None，让调用方当作不需要续期。"""
+    try:
+        body, _ = token.split(".", 1)
+        issued = int(json.loads(_unb64(body)).get("exp", 0)) - SESSION_TTL
+        return max(0, int(time.time()) - issued)
     except Exception:
         return None
 

@@ -10,7 +10,7 @@
 import { esc, toast, useUserData, migrateLegacyTo, log } from './db.js';
 
 const CACHE_KEY = 'atlas.auth';
-const SESSION_MS = 12 * 3600 * 1000;
+const SESSION_MS = 30 * 24 * 3600 * 1000;   // 与服务端一致：登录一次管 30 天
 
 export const session = { user: null, offline: false };
 export const authUser = () => session.user;
