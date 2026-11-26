@@ -157,7 +157,16 @@ async function gate() {
   const u = await loadSession();
   if (!u) return mountGate('login', gate);
   if (u.must_change) return mountGate('change', gate, { old: lastPassword });
+  keepStorage();
   await render();
+}
+
+/** 让浏览器把本站的 IndexedDB 当“持久数据”，空间紧张时别优先回收它。静默、失败也无所谓。 */
+function keepStorage() {
+  try {
+    if (!navigator.storage?.persist) return;
+    navigator.storage.persisted().then(p => { if (!p) navigator.storage.persist(); }).catch(() => {});
+  } catch { /* ignore */ }
 }
 
 export async function boot() {

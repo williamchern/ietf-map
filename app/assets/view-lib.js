@@ -1,5 +1,5 @@
 /* IETF Atlas — 收藏库 / 诊断与报告 */
-import { esc, toast, log, db, fmtDate } from './db.js';
+import { esc, toast, log, db, fmtDate, setSettings } from './db.js';
 import { index, getAssets, saveAsset, removeAsset, computeGaps, statusOf, DOC_URL, GROUP_URL } from './data.js';
 import { shortName } from './mine.js';
 import {
@@ -176,6 +176,7 @@ export async function viewLibrary(root) {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = `ietf-atlas-backup-${fmtDate(Date.now())}.json`; a.click();
     await log('export-backup', `${assets.length} 项`);
+    await setSettings({ lastExport: Date.now() });
     toast('已导出备份');
   });
 }

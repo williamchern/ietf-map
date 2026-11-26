@@ -5,6 +5,7 @@ import {
   authUser, isAdmin, session, changePassword, logout, listUsers,
   createUser, resetUserPassword, deleteUser, auditEvents,
 } from './auth.js';
+import { mountRecover } from './recover.js';
 
 const ACTIONS = {
   'star-doc': '收藏文稿', 'unstar-doc': '移除文稿', 'star-group': '关注组', 'unstar-group': '取消关注组',
@@ -14,7 +15,7 @@ const ACTIONS = {
   'login': '登录', 'logout': '退出登录', 'password-change': '修改密码',
   'user-create': '新建账号', 'user-reset': '重置密码', 'user-delete': '删除账号',
   'auth-login': '登录（服务端）', 'auth-login-fail': '登录失败（服务端）',
-  'auth-login-lock': '登录锁定', 'data-migrate': '迁移旧数据'
+  'auth-login-lock': '登录锁定', 'data-migrate': '迁移旧数据', 'data-restore': '恢复本机数据'
 };
 
 export async function viewLog(root) {
@@ -240,11 +241,24 @@ jobs:
       <span class="hint">快照由 <code>scripts/fetch.py</code> 从 Datatracker 公开 API 生成。</span>
     </div></div>
 
-    <div class="card"><div class="head">数据</div><div class="body row">
-      <button class="btn" id="imp">导入备份 JSON</button>
-      <input type="file" id="file" accept="application/json" hidden>
+    <div class="card"><div class="head">找回数据</div><div class="body">
+      <p class="hint" style="margin:0 0 10px">收藏存在<b>这台浏览器</b>里，按账号分库。换账号、换浏览器、清站点数据之后看到的都是空库——
+      但原来那份可能还留在本机。扫一下就知道。</p>
+      <div class="hint warn" id="db-tip" hidden style="margin:0 0 10px"></div>
+      <div class="row" style="margin-bottom:10px">
+        <button class="btn" id="db-scan">扫描本机历史数据</button>
+        <button class="btn" id="db-export">导出备份 JSON</button>
+        <button class="btn" id="db-import">导入备份 JSON</button>
+        <input type="file" id="db-file" accept="application/json" hidden>
+      </div>
+      <div id="db-list"></div>
+      <div class="hint" id="store-info" style="margin-top:10px"></div>
+      <div class="row" style="margin-top:8px"><button class="btn sm" id="db-persist" hidden>开启持久存储</button></div>
+    </div></div>
+
+    <div class="card"><div class="head">清空</div><div class="body row">
       <button class="btn danger" id="wipe">清空本地全部数据</button>
-      <span class="hint">清空前建议先导出备份（备份不含离线正文）。</span>
+      <span class="hint">只清当前账号；清空前先导出备份（备份不含离线正文）。</span>
     </div></div>
   `;
 
@@ -291,20 +305,13 @@ jobs:
       msg.textContent = '✗ ' + e.message + '（可能是跨域限制，建议使用自建代理）';
     }
   });
-  root.querySelector('#imp').addEventListener('click', () => root.querySelector('#file').click());
-  root.querySelector('#file').addEventListener('change', async e => {
-    const f = e.target.files[0]; if (!f) return;
-    const j = JSON.parse(await f.text());
-    let n = 0;
-    for (const a of j.assets || []) { await db.put('assets', a); n++; }
-    await log('import-backup', `${n} 项`);
-    toast(`已导入 ${n} 项`); setTimeout(() => location.reload(), 700);
-  });
   root.querySelector('#wipe').addEventListener('click', async () => {
     if (!confirm('将清空收藏、日志、报告、设置，以及已下载到本机的离线正文，确认？\n\n导出备份里不含离线正文，清掉就只能重新下载。')) return;
     for (const s2 of ['assets', 'logs', 'reports', 'settings', 'offline']) await db.clear(s2);
     toast('已清空'); setTimeout(() => location.reload(), 600);
   });
+
+  await mountRecover(root);
 
   /* ---------- 账号与安全 ---------- */
 
@@ -456,11 +463,28 @@ export async function viewHelp(root) {
     之后新建的账号都是空的，不会复制别人的收藏。</p>
     <p class="hint">断网时用的是本机缓存的登录状态（同样 30 天），离线阅读照常；缓存过期后需要联网重新登录一次。</p>
 
-    <h2>3. 怎么切换视图</h2>
+    <h2>3. 收藏会不会丢</h2>
+    <p>收藏、笔记、离线正文都只存在<b>这台浏览器</b>里（IndexedDB），按账号分库。服务器只存账号凭据，不存你的收藏——
+    所以 <b>GitHub 仓库里也没有</b>，从代码仓库恢复不出来。</p>
+    <table>
+      <tr><th>看起来"丢了"</th><th>怎么回事</th></tr>
+      <tr><td>换了账号登录</td><td>每个账号一个独立的库；换个人登录看到的是他/她的库</td></tr>
+      <tr><td>换浏览器 / 换设备 / 隐私窗口</td><td>数据跟着浏览器走，不跨设备同步</td></tr>
+      <tr><td>清了站点数据、清了缓存</td><td>IndexedDB 一起被删</td></tr>
+      <tr><td>iPhone / iPad 上的 Safari</td><td>超过 7 天没访问，系统会清掉本站的本地数据</td></tr>
+      <tr><td>磁盘紧张</td><td>浏览器可能回收"不常用站点"的存储</td></tr>
+    </table>
+    <p><b>怎么找回来：</b>配置 → 找回数据 → <b>扫描本机历史数据</b>。它会列出这台浏览器里所有 <code>ietf-atlas*</code> 库以及各自有多少条收藏，
+    哪份有数就点「恢复到此账号」合并过来（只加不删，源库原样保留）。以前导出过 JSON 的，用「导入备份 JSON」。</p>
+    <p class="hint">升级到账号版时，旧版本那份公共库是<b>原样留着</b>的，没有删——现在的库如果是空的，扫描通常能看见它。</p>
+    <p><b>以后别再丢：</b>① 每周点一次「导出备份 JSON」，文件存网盘；② 点「开启持久存储」，让浏览器别在空间紧张时回收；
+    ③ 加到主屏或书签，别让 Safari 判定为"久未访问"；④ 换浏览器前先导出。</p>
+
+    <h2>4. 怎么切换视图</h2>
     <p>顶栏左上角是<b>视图下拉</b>：点一下展开竖排菜单，选哪个进哪个，不用在横排标题里一个个找。</p>
     <p class="hint">地址栏里的 hash 会跟着变（<code>#/graph</code>、<code>#/library</code>…），收藏夹里存哪个视图都行。</p>
 
-    <h2>4. 图谱怎么读</h2>
+    <h2>5. 图谱怎么读</h2>
     <p>只有一幅图，回答一个问题：<b>这个技术领域里，谁建立在谁之上。</b></p>
     <table>
       <tr><th>你看到的</th><th>意思</th></tr>
@@ -472,7 +496,7 @@ export async function viewHelp(root) {
     <p class="hint">选哪个领域，用左上角的下拉框。领域 = IETF 的工作组 / 研究组，图里是它内部的文稿引用。
     下拉里<b>只出现你收藏的草案所在的工作组</b>——全站几十个组跟你没关系，列出来只是噪声。</p>
 
-    <h2>5. 推荐使用顺序</h2>
+    <h2>6. 推荐使用顺序</h2>
     <ol>
       <li>先把你在读的 <b>3–8 份文稿</b>加进来（只加<b>真的读过</b>的，别加待读清单）。</li>
       <li><a href="#/graph">图谱</a>里只有你收藏的组，选一个看这张领域图：哪些是地基，哪些建立在它之上。</li>
@@ -481,12 +505,12 @@ export async function viewHelp(root) {
       <li>收藏库按组归类，<b>「已收 / 组内总数」</b>直接告诉你哪块还有空白。</li>
     </ol>
 
-    <h2>6. 关系解读为什么不会瞎编</h2>
+    <h2>7. 关系解读为什么不会瞎编</h2>
     <p>可选的模型归纳有一条硬约束：<b>模型只能看到已抓取的真实引用边，每条结论必须挂证据编号</b>。
     输出后前端会校验编号，对不上一律丢弃并标出丢弃条数。没有配置 API Key 时自动改用本地统计归纳（纯规则计算，结论可复现）。</p>
     <p class="hint">所以不会出现"这两个组有关系，因为都涉及能源"这种没有证据的推测。</p>
 
-    <h2>7. 诊断页四个分区</h2>
+    <h2>8. 诊断页四个分区</h2>
     <p>诊断页不讲评分，只按「补了最有用」的顺序排四段：</p>
     <table>
       <tr><th>分区</th><th>判定规则</th><th>为什么排这个顺序</th></tr>
@@ -496,7 +520,7 @@ export async function viewHelp(root) {
       <tr><td>④ 关注了但没读的组</td><td>关注了组，组内 0 篇收藏</td><td>要么补一份，要么取关，别让收藏库虚胖</td></tr>
     </table>
 
-    <h2>8. 操作速查</h2>
+    <h2>9. 操作速查</h2>
     <ul>
       <li>图中<b>滚轮缩放</b>、<b>拖拽空白处平移</b>；点空白处取消选中</li>
       <li>右上角<b>「全屏」</b>是真的全屏：页眉、页脚、侧栏都收起，只剩图和详情；<b>Esc</b> 或「退出全屏」回来</li>
@@ -508,7 +532,7 @@ export async function viewHelp(root) {
       <li>收藏库里点<b>文稿名</b>就是选版本：读本机副本、下载到本机，或者在线看一次</li>
     </ul>
 
-    <h2>9. 离线下载与阅读</h2>
+    <h2>10. 离线下载与阅读</h2>
     <p>收藏库每一行只有两个入口：<b>点文稿名</b>、点右边的<b>「管理」</b>。两个都打开同一张「版本」面板，
     在里面挑版本（草案有 00 到最新，RFC 只有一版），再决定这一版怎么处理：</p>
     <ul>
@@ -526,10 +550,10 @@ export async function viewHelp(root) {
       <li>正文只是只读缓存；引用与转载仍以官方发布版本为准，别把缓存当权威副本。</li>
     </ul>
 
-    <h2>10. 安装为应用</h2>
+    <h2>11. 安装为应用</h2>
     <p>Chrome / Edge 地址栏右侧点"安装"，或 iOS Safari「分享 → 添加到主屏幕」。安装后快照本地缓存，可离线查看已收藏内容。</p>
 
-    <h2>11. 法律与商标</h2>
+    <h2>12. 法律与商标</h2>
     <blockquote>
       IETF Atlas 是<b>第三方非官方工具</b>，与 IETF Trust、IETF LLC、IESG 无任何隶属或背书关系。
       本站不镜像 IETF 全文文档，仅展示元数据与摘要节选，并链接至 ietf.org 原文。

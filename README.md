@@ -18,6 +18,7 @@ app/                 可安装的 PWA 前端
   data/snapshot.json 构建期生成的 IETF 数据快照
   data/layout.json   图谱的静态坐标（离线算好，运行时只读）
   assets/offline.js  离线正文：按版本下载、存 IndexedDB、应用内阅读
+  assets/recover.js  本机数据找回：列出所有 ietf-atlas* 库、合并、导出/导入 JSON、申请持久存储
 server.py            静态托管 + /api/live 同源代理（转发 Datatracker，解决 CORS）+ 登录鉴权
 auth.py              账号与会话：PBKDF2 散列、签名 Cookie、登录节流、审计日志
 state/               运行时生成（不入库）：users.json 账号、secret 签名密钥、auth.log 审计
