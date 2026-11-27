@@ -1,5 +1,5 @@
 /* IETF Atlas Service Worker — 应用外壳 + 数据快照离线可用 */
-const VERSION = 'v17';
+const VERSION = 'v18';
 const SHELL = `atlas-shell-${VERSION}`;
 const DATA = `atlas-data-${VERSION}`;
 const ASSETS = [

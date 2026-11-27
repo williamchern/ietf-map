@@ -768,3 +768,16 @@ html.fs-open body { padding-top: 0 !important; }
 @media (max-width: 520px) {
   .db-row-act { margin-left: 0; }
 }
+
+/* 空收藏时的开场自检条：结论一句话说清，别让人自己猜 */
+.data-banner {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  border: 1px solid var(--border); border-left: 3px solid var(--attention, #9a6700);
+  border-radius: var(--radius); background: var(--bg-subtle);
+  padding: 12px 14px; margin-bottom: 16px; font-size: 13px;
+}
+.data-banner[data-mode="found"] { border-left-color: var(--success); background: var(--success-subtle); }
+.data-banner .banner-body { flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.data-banner .banner-body strong { font-size: 13px; }
+.data-banner .banner-body span { color: var(--fg-muted); line-height: 1.55; }
+.data-banner .row { gap: 8px; flex-wrap: wrap; }

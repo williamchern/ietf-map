@@ -147,6 +147,8 @@ export async function render() {
     await fn(view);
     wrapTables();
     window.scrollTo(0, 0);
+    // 收藏是空的就把「能不能找回」的结论直接放到最上面，别让人自己去翻配置页
+    if (path !== '/settings') import('./view-misc.js').then(m => m.emptyBanner()).catch(() => {});
   } finally {
     _rendering = false;
   }

@@ -88,6 +88,27 @@ export async function scan() {
   return out;
 }
 
+/**
+ * 体检报告：这台浏览器的数据到底还在不在。
+ * 光看「有几个库、库里几条」不够——浏览器清站点数据、卸载 PWA 之后库会整个消失，
+ * 但对方是不是真的清过、清掉了多少，从存储用量和来源痕迹还能看出来。
+ */
+export async function diagnose() {
+  const dbs = await scan();
+  const st = await storageInfo();
+  const bits = { origin: location.origin, pwa: null, caches: 0, marks: {}, sw: null };
+  try { bits.pwa = window.matchMedia('(display-mode: standalone)').matches; } catch { /* ignore */ }
+  try { bits.standalone = !!navigator.standalone; } catch { /* ignore */ }
+  try { bits.caches = (await caches.keys()).length; } catch { /* ignore */ }
+  try { bits.sw = !!(navigator.serviceWorker && navigator.serviceWorker.controller); } catch { /* ignore */ }
+  for (const k of ['atlas.legacy-claimed-by', 'atlas.auth', 'kg.group']) {
+    try { bits.marks[k] = localStorage.getItem(k); } catch { /* ignore */ }
+  }
+  bits.dbs = dbs;
+  bits.used = st.used; bits.quota = st.quota; bits.persisted = st.persisted;
+  return bits;
+}
+
 /** 把某个库整段搬到当前账号下。只加不删：同 id 覆盖，其余保留。 */
 export async function restoreFrom(name) {
   const dbi = await openRo(name);
@@ -104,7 +125,6 @@ export async function restoreFrom(name) {
 }
 
 /* ---------- 存储状态：会不会被浏览器回收 ---------- */
-
 export async function storageInfo() {
   const info = { used: 0, quota: 0, persisted: false, supported: !!(navigator.storage && navigator.storage.persist) };
   try {
@@ -216,6 +236,26 @@ export async function mountRecover(root) {
 
   // 当前账号是空库就直接扫一遍：多半是换账号 / 换浏览器丢的，有救就当场告诉他
   try { if (!(await db.all('assets')).length) await doScan(); } catch { /* ignore */ }
+
+  // 「把体检结果复制出来」：出问题时用户往往说不清环境，一键复制比来回追问快
+  root.querySelector('#db-diag')?.addEventListener('click', async () => {
+    const d = await diagnose();
+    const lines = [
+      `时间：${new Date().toLocaleString('zh-CN')}`,
+      `地址：${d.origin}`,
+      `窗口：${d.pwa ? '已安装为应用（独立窗口）' : '浏览器标签页'}`,
+      `已用：${(d.used / 1048576).toFixed(1)} MB / 额度 ${(d.quota / 1048576).toFixed(0)} MB · 持久存储：${d.persisted ? '已开启' : '未开启'}`,
+      `Service Worker：${d.sw ? '已接管' : '未接管'} · 缓存 ${d.caches} 个`,
+      `本机标记：旧库认领=${d.marks['atlas.legacy-claimed-by'] ?? '无'} · 登录缓存=${d.marks['atlas.auth'] ? '有' : '无'}`,
+      '本机能看到的库：',
+      ...d.dbs.map(x => x.error ? `  - ${x.name}（打不开：${x.error}）`
+        : `  - ${x.name}${x.current ? '（当前账号）' : ''}：收藏 ${x.counts.assets} · 笔记 ${x.counts.notes} · 离线 ${x.counts.offline}`),
+    ];
+    const text = lines.join('\n');
+    try { await navigator.clipboard.writeText(text); toast('体检结果已复制，可直接粘给我'); }
+    catch { toast('复制失败，请手动截图这行文字'); console.log(text); }
+    list.innerHTML = `<pre class="report-pre" style="margin-top:8px">${esc(text)}</pre>`;
+  });
 
   root.querySelector('#db-export')?.addEventListener('click', async () => {
     const n = await exportBackup();

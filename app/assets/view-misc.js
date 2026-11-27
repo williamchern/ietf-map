@@ -5,7 +5,44 @@ import {
   authUser, isAdmin, session, changePassword, logout, listUsers,
   createUser, resetUserPassword, deleteUser, auditEvents,
 } from './auth.js';
-import { mountRecover } from './recover.js';
+import { mountRecover, diagnose } from './recover.js';
+
+/** 开场自检：收藏是空的就看看这台机器里是不是还有别的库，把结论直接放到页面最上面 */
+export async function emptyBanner() {
+  const view = document.getElementById('view');
+  if (!view || document.getElementById('data-banner')) return;
+  let mine = 0;
+  try { mine = (await db.all('assets')).length; } catch { /* ignore */ }
+  if (mine) return;                                        // 有收藏就不用提醒
+  let d;
+  try { d = await diagnose(); } catch { return; }
+  const others = d.dbs.filter(x => !x.current && !x.error && x.counts.assets > 0);
+  const total = d.dbs.reduce((n, x) => n + (x.error ? 0 : x.counts.assets), 0);
+  const box = document.createElement('div');
+  box.id = 'data-banner';
+  box.className = 'data-banner';
+  box.dataset.mode = others.length ? 'found' : 'empty';
+  box.innerHTML = others.length
+    ? `<div class="banner-body"><strong>这台机器里还有 ${others.reduce((n, x) => n + x.counts.assets, 0)} 条收藏在别的库里</strong>
+        <span>（${others.map(x => `<code>${esc(x.name)}</code> ${x.counts.assets} 条`).join('、')}）。
+        当前账号是空库，可以去配置页合并回来。</span></div>
+       <a class="btn sm" href="#/settings">去配置页找回</a>`
+    : `<div class="banner-body"><strong>这个账号下还没有收藏</strong>
+        <span>本机只剩当前这个库（${total} 条），说明数据不在这台浏览器里了。
+        ${d.used > 200 * 1048576 ? `存储占用 ${(d.used / 1048576).toFixed(0)} MB，主要是站点缓存，不是收藏。` : ''}
+        旧数据只能从你导出的备份 JSON 恢复。</span></div>
+       <div class="row"><button class="btn sm" id="banner-diag">复制体检结果</button><a class="btn sm" href="#/settings">配置页</a></div>`;
+  box.querySelector('#banner-diag')?.addEventListener('click', async () => {
+    const lines = [
+      `地址：${d.origin} · ${d.pwa ? '独立窗口' : '标签页'}`,
+      `已用 ${(d.used / 1048576).toFixed(1)} MB · 持久存储 ${d.persisted ? '已开启' : '未开启'} · SW ${d.sw ? '已接管' : '未接管'}`,
+      ...d.dbs.map(x => `${x.name}${x.current ? '(当前)' : ''}：${x.error ? '打不开' : x.counts.assets + ' 条收藏'}`),
+    ].join('\n');
+    try { await navigator.clipboard.writeText(lines); toast('体检结果已复制'); } catch { toast('复制失败'); console.log(lines); }
+  });
+  const main = view.querySelector('main') || view;
+  main.insertBefore(box, main.firstChild);
+}
 
 const ACTIONS = {
   'star-doc': '收藏文稿', 'unstar-doc': '移除文稿', 'star-group': '关注组', 'unstar-group': '取消关注组',
@@ -247,6 +284,7 @@ jobs:
       <div class="hint warn" id="db-tip" hidden style="margin:0 0 10px"></div>
       <div class="row" style="margin-bottom:10px">
         <button class="btn" id="db-scan">扫描本机历史数据</button>
+        <button class="btn" id="db-diag">复制体检结果</button>
         <button class="btn" id="db-export">导出备份 JSON</button>
         <button class="btn" id="db-import">导入备份 JSON</button>
         <input type="file" id="db-file" accept="application/json" hidden>
