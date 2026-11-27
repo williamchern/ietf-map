@@ -267,6 +267,12 @@ class Handler(SimpleHTTPRequestHandler):
             name = str(body.get("name") or "").strip()
             pw = str(body.get("password") or "")
             u = auth.find_user(name)
+            # 密码带了首尾空白（手机键盘、复制粘贴最常见）：明确提示，而不是笼统报"账号或密码不对"
+            if u and pw != pw.strip() and auth.check_password(u, pw.strip()):
+                auth.note_ok(ip)
+                auth.audit("login-fail", f"{ip} · {name} · 密码末尾有空白")
+                return self._json(400, json.dumps(
+                    {"error": "密码后面多了空格，删掉空格再登录"}, ensure_ascii=False).encode())
             if not u or not auth.check_password(u, pw):
                 auth.note_fail(ip)
                 auth.audit("login-fail", f"{ip} · {name or '(空)'}")
